@@ -1,10 +1,13 @@
 package com.example.calorietracker
 
 import android.content.Intent
+import android.widget.Toast
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
@@ -125,6 +128,26 @@ fun HistoryScreen(entries: List<Entry>, goal: Int, today: Long) {
                 val csv = "date,meal,food,qty,kcal\n" + entries.sortedBy { it.day }.joinToString("\n") { "${LocalDate.ofEpochDay(it.day)},${it.meal},\"${it.name}\",${it.qty},${it.total}" }
                 ctx.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_SUBJECT, "Calorie log").putExtra(Intent.EXTRA_TEXT, csv), "Export / back up"))
             }, modifier = Modifier.fillMaxWidth()) { Text("Export / back up (CSV)") }
+        }
+    }
+}
+
+@Composable
+fun QuickAdd(foods: List<Food>, onLog: (Food, Double, String) -> Unit) {
+    val ctx = LocalContext.current
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text("⚡ Quick add", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+        Text("Tap once = 1 serving. Use + Add below for a different quantity.", fontSize = 12.sp, color = Color.Gray)
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(foods) { f ->
+                AssistChip(
+                    onClick = {
+                        onLog(f, 1.0, defaultMeal())
+                        Toast.makeText(ctx, "Added 1 × ${f.name} (+${f.kcal} kcal)", Toast.LENGTH_SHORT).show()
+                    },
+                    label = { Text("${f.name} · ${f.kcal}", fontSize = 13.sp) }
+                )
+            }
         }
     }
 }

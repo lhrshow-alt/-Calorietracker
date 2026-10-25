@@ -155,6 +155,7 @@ fun Dashboard(foods: List<Food>, all: List<Entry>, day: Long, goal: Int, water: 
                 Stat("Remaining", "${(goal - eaten).coerceAtLeast(0)}", Modifier.weight(1f))
             }
         }
+        item { QuickAdd(sorted, onLog) }
         item { WaterCard(water, onWater) }
         item { if (all.any { it.day == day - 1 }) OutlinedButton(onClick = onCopyYesterday, modifier = Modifier.fillMaxWidth()) { Text("↻ Same as yesterday") } }
         item { Text("What did you eat?", fontSize = 18.sp, fontWeight = FontWeight.Bold) }
