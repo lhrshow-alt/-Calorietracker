@@ -1,6 +1,12 @@
 package com.example.calorietracker
 
+import android.content.ClipData
+import android.content.Context
 import android.content.Intent
+import androidx.core.content.FileProvider
+import java.io.File
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import android.widget.Toast
@@ -156,6 +162,11 @@ fun HistoryScreen(entries: List<Entry>, goal: Int, today: Long, onImport: (Strin
         item { CalendarCard(entries, goal, today) }
         item {
             Button(onClick = {
+                runCatching { shareXlsx(ctx, entries, goal) }.onFailure { Toast.makeText(ctx, "Couldn't create the Excel file", Toast.LENGTH_LONG).show() }
+            }, modifier = Modifier.fillMaxWidth()) { Text("Export as Excel (.xlsx)") }
+        }
+        item {
+            Button(onClick = {
                 val csv = "date,meal,food,qty,kcal\n" + entries.sortedBy { it.day }.joinToString("\n") { "${LocalDate.ofEpochDay(it.day)},${it.meal},\"${it.name}\",${it.qty},${it.total}" }
                 ctx.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_SUBJECT, "Calorie log").putExtra(Intent.EXTRA_TEXT, csv), "Export / back up"))
             }, modifier = Modifier.fillMaxWidth()) { Text("Export / back up (CSV)") }
@@ -259,4 +270,51 @@ fun CalendarCard(entries: List<Entry>, goal: Int, today: Long) {
             }
         }
     }
+}
+
+private fun esc(s: String) = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;")
+
+private fun sheetXml(rows: List<List<Any>>): String {
+    val sb = StringBuilder("""<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>""")
+    rows.forEachIndexed { r, row ->
+        sb.append("<row r=\"${r + 1}\">")
+        row.forEachIndexed { c, v ->
+            val ref = "${'A' + c}${r + 1}"
+            if (v is Number) sb.append("<c r=\"$ref\"><v>$v</v></c>")
+            else sb.append("<c r=\"$ref\" t=\"inlineStr\"><is><t>${esc(v.toString())}</t></is></c>")
+        }
+        sb.append("</row>")
+    }
+    return sb.append("</sheetData></worksheet>").toString()
+}
+
+/** Writes a real .xlsx (zip of XML parts) with two sheets: Log and Daily totals. */
+fun buildXlsx(file: File, entries: List<Entry>, goal: Int) {
+    val sorted = entries.sortedBy { it.day }
+    val log = listOf<List<Any>>(listOf("Date", "Meal", "Food", "Quantity", "Kcal per unit", "Total kcal")) +
+        sorted.map { listOf<Any>(LocalDate.ofEpochDay(it.day).toString(), it.meal, it.name, it.qty, it.kcal, it.total) }
+    val daily = listOf<List<Any>>(listOf("Date", "Total kcal", "Goal", "Left (+) / Over (-)")) +
+        sorted.groupBy { it.day }.toSortedMap().map { (d, l) -> val t = l.sumOf { it.total }; listOf<Any>(LocalDate.ofEpochDay(d).toString(), t, goal, goal - t) }
+    val rel = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+    ZipOutputStream(file.outputStream()).use { z ->
+        fun put(name: String, text: String) { z.putNextEntry(ZipEntry(name)); z.write(text.toByteArray(Charsets.UTF_8)); z.closeEntry() }
+        val head = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>"""
+        put("[Content_Types].xml", head + """<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/worksheets/sheet2.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>""")
+        put("_rels/.rels", head + """<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="$rel/officeDocument" Target="xl/workbook.xml"/></Relationships>""")
+        put("xl/workbook.xml", head + """<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="$rel"><sheets><sheet name="Log" sheetId="1" r:id="rId1"/><sheet name="Daily totals" sheetId="2" r:id="rId2"/></sheets></workbook>""")
+        put("xl/_rels/workbook.xml.rels", head + """<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="$rel/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="$rel/worksheet" Target="worksheets/sheet2.xml"/></Relationships>""")
+        put("xl/worksheets/sheet1.xml", sheetXml(log))
+        put("xl/worksheets/sheet2.xml", sheetXml(daily))
+    }
+}
+
+fun shareXlsx(ctx: Context, entries: List<Entry>, goal: Int) {
+    val dir = File(ctx.cacheDir, "exports").apply { mkdirs() }
+    val f = File(dir, "CalorieTracker-${LocalDate.now()}.xlsx")
+    buildXlsx(f, entries, goal)
+    val uri = FileProvider.getUriForFile(ctx, "${ctx.packageName}.fileprovider", f)
+    val send = Intent(Intent.ACTION_SEND).setType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        .putExtra(Intent.EXTRA_STREAM, uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    send.clipData = ClipData.newRawUri("", uri)
+    ctx.startActivity(Intent.createChooser(send, "Export Excel"))
 }
