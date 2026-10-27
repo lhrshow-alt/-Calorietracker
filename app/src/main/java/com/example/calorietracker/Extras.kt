@@ -1,6 +1,8 @@
 package com.example.calorietracker
 
 import android.content.Intent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import android.widget.Toast
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -86,8 +88,32 @@ fun GoalDialog(goal: Int, onClose: () -> Unit, onSave: (Int) -> Unit) {
 }
 
 @Composable
-fun HistoryScreen(entries: List<Entry>, goal: Int, today: Long) {
+fun HistoryScreen(entries: List<Entry>, goal: Int, today: Long, onImport: (String) -> Int) {
     val ctx = LocalContext.current
+    var showImport by remember { mutableStateOf(false) }
+    fun report(n: Int) {
+        Toast.makeText(ctx, if (n > 0) "Imported $n entries" else if (n == 0) "Nothing new to import (already added, or not a Calorie Tracker CSV)" else "Couldn't read that file", Toast.LENGTH_LONG).show()
+        showImport = false
+    }
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            val text = runCatching { ctx.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() } }.getOrNull()
+            report(if (text != null) onImport(text) else -1)
+        }
+    }
+    if (showImport) {
+        var pasted by remember { mutableStateOf("") }
+        AlertDialog(onDismissRequest = { showImport = false }, title = { Text("Import from CSV") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = { picker.launch(arrayOf("*/*")) }, modifier = Modifier.fillMaxWidth()) { Text("Choose a file…") }
+                    Text("or paste the exported text:", fontSize = 12.sp, color = Color.Gray)
+                    OutlinedTextField(pasted, { pasted = it }, modifier = Modifier.fillMaxWidth().height(140.dp), placeholder = { Text("date,meal,food,qty,kcal …") })
+                }
+            },
+            confirmButton = { Button(enabled = pasted.isNotBlank(), onClick = { report(onImport(pasted)) }) { Text("Import pasted text") } },
+            dismissButton = { TextButton(onClick = { showImport = false }) { Text("Cancel") } })
+    }
     val days = (6 downTo 0).map { today - it }
     val totals = days.map { d -> entries.filter { it.day == d }.sumOf { it.total } }
     val max = maxOf(goal, totals.max()).coerceAtLeast(1)
@@ -129,6 +155,7 @@ fun HistoryScreen(entries: List<Entry>, goal: Int, today: Long) {
                 ctx.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_SUBJECT, "Calorie log").putExtra(Intent.EXTRA_TEXT, csv), "Export / back up"))
             }, modifier = Modifier.fillMaxWidth()) { Text("Export / back up (CSV)") }
         }
+        item { OutlinedButton(onClick = { showImport = true }, modifier = Modifier.fillMaxWidth()) { Text("Import from CSV") } }
     }
 }
 
@@ -150,4 +177,23 @@ fun QuickAdd(foods: List<Food>, onLog: (Food, Double, String) -> Unit) {
             }
         }
     }
+}
+
+private val csvRow = Regex("""^(\d{4}-\d{2}-\d{2}),([^,]+),"?(.*?)"?,([0-9.]+),(\d+)$""")
+
+/** Reads text exported by "Export / back up (CSV)". Returns merged entries, merged foods, and how many entries were new. */
+fun mergeImport(text: String, entries: List<Entry>, foods: List<Food>): Triple<List<Entry>, List<Food>, Int> {
+    val parsed = text.lines().mapIndexedNotNull { i, raw ->
+        val m = csvRow.matchEntire(raw.trim()) ?: return@mapIndexedNotNull null
+        val (date, meal, name, q, total) = m.destructured
+        val qty = q.toDoubleOrNull()?.takeIf { it > 0 } ?: return@mapIndexedNotNull null
+        val day = runCatching { LocalDate.parse(date).toEpochDay() }.getOrNull() ?: return@mapIndexedNotNull null
+        Entry(System.nanoTime() + i, name.trim(), (total.toInt() / qty).roundToInt(), qty, day, meal.trim())
+    }
+    fun key(e: Entry) = listOf(e.day, e.meal, e.name, e.qty, e.total)
+    val seen = entries.map { key(it) }.toSet()
+    val fresh = parsed.filter { key(it) !in seen }
+    val newFoods = fresh.distinctBy { it.name }.filter { e -> foods.none { it.name == e.name } }
+        .mapIndexed { i, e -> Food(System.nanoTime() + i, e.name, e.kcal) }
+    return Triple(entries + fresh, foods + newFoods, fresh.size)
 }

@@ -94,7 +94,10 @@ fun App(store: Store) {
                     onWater = { water = it.coerceIn(0, 30); store.saveWater(today, water) },
                     onCopyYesterday = { entries = entries + entries.filter { it.day == today - 1 }.mapIndexed { i, e -> e.copy(id = System.nanoTime() + i, day = today) }; store.saveEntries(entries) })
                 1 -> FoodsScreen(foods, onFoods, onboarding = false) {}
-                else -> HistoryScreen(entries, goal, today)
+                else -> HistoryScreen(entries, goal, today) { text ->
+                    val (e, f, n) = mergeImport(text, entries, foods)
+                    entries = e; foods = f; store.saveEntries(e); store.saveFoods(f); n
+                }
             }
         }
     }

@@ -7,7 +7,7 @@ android {
     namespace = "com.example.calorietracker"
     compileSdk = 34
     defaultConfig {
-        applicationId = "com.example.calorietracker"
+        applicationId = "com.calorietracker.daily"
         minSdk = 26; targetSdk = 34; versionCode = (System.getenv("GITHUB_RUN_NUMBER") ?: "1").toInt(); versionName = "1.0"
     }
     signingConfigs {
