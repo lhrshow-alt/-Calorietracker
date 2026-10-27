@@ -5,6 +5,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import android.widget.Toast
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -16,6 +18,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -28,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import java.time.LocalDate
 import java.time.LocalTime
+import java.time.YearMonth
 import kotlin.math.roundToInt
 
 val meals = listOf("Breakfast", "Lunch", "Dinner", "Snack")
@@ -149,6 +153,7 @@ fun HistoryScreen(entries: List<Entry>, goal: Int, today: Long, onImport: (Strin
                 }
             }
         }
+        item { CalendarCard(entries, goal, today) }
         item {
             Button(onClick = {
                 val csv = "date,meal,food,qty,kcal\n" + entries.sortedBy { it.day }.joinToString("\n") { "${LocalDate.ofEpochDay(it.day)},${it.meal},\"${it.name}\",${it.qty},${it.total}" }
@@ -196,4 +201,62 @@ fun mergeImport(text: String, entries: List<Entry>, foods: List<Food>): Triple<L
     val newFoods = fresh.distinctBy { it.name }.filter { e -> foods.none { it.name == e.name } }
         .mapIndexed { i, e -> Food(System.nanoTime() + i, e.name, e.kcal) }
     return Triple(entries + fresh, foods + newFoods, fresh.size)
+}
+
+@Composable
+fun CalendarCard(entries: List<Entry>, goal: Int, today: Long) {
+    var month by remember { mutableStateOf(YearMonth.from(LocalDate.ofEpochDay(today))) }
+    var sel by remember { mutableStateOf(today) }
+    val byDay = remember(entries) { entries.groupBy { it.day }.mapValues { (_, l) -> l.sumOf { it.total } } }
+    val offset = month.atDay(1).dayOfWeek.value - 1 // Monday first
+    val rows = (offset + month.lengthOfMonth() + 6) / 7
+    Card(shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(MaterialTheme.colorScheme.surface)) {
+        Column(Modifier.padding(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = { month = month.minusMonths(1) }) { Text("◀") }
+                Text("${month.month.name.lowercase().replaceFirstChar { it.uppercase() }} ${month.year}", Modifier.weight(1f), textAlign = TextAlign.Center, fontWeight = FontWeight.Bold)
+                TextButton(onClick = { month = month.plusMonths(1) }) { Text("▶") }
+            }
+            Row { listOf("M", "T", "W", "T", "F", "S", "S").forEach { Text(it, Modifier.weight(1f), textAlign = TextAlign.Center, fontSize = 11.sp, color = Color.Gray) } }
+            for (r in 0 until rows) {
+                Row {
+                    for (c in 0 until 7) {
+                        val day = r * 7 + c - offset + 1
+                        if (day < 1 || day > month.lengthOfMonth()) { Spacer(Modifier.weight(1f)); continue }
+                        val d = month.atDay(day).toEpochDay()
+                        val total = byDay[d] ?: 0
+                        val shape = RoundedCornerShape(10.dp)
+                        val bg = when { total == 0 -> Color.Transparent; total > goal -> Color(0x33D32F2F); else -> Color(0x3343A047) }
+                        Box(
+                            Modifier.weight(1f).height(52.dp).padding(2.dp).clip(shape).background(bg)
+                                .then(if (d == sel) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, shape) else Modifier)
+                                .clickable { sel = d },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text("$day", fontSize = 12.sp, fontWeight = if (d == today) FontWeight.ExtraBold else FontWeight.Normal)
+                                if (total > 0) Text("$total", fontSize = 10.sp, color = Color.Gray)
+                            }
+                        }
+                    }
+                }
+            }
+            Text("Number under the date = kcal used that day. Green = within goal, red = over.", fontSize = 11.sp, color = Color.Gray, modifier = Modifier.padding(top = 6.dp))
+            Spacer(Modifier.height(8.dp))
+            val dayEntries = entries.filter { it.day == sel }
+            val tot = dayEntries.sumOf { it.total }
+            Text(LocalDate.ofEpochDay(sel).toString(), fontWeight = FontWeight.Bold)
+            Text(
+                if (dayEntries.isEmpty()) "Nothing logged." else "$tot of $goal kcal used · " + if (tot > goal) "${tot - goal} over" else "${goal - tot} left",
+                color = Color.Gray, fontSize = 13.sp
+            )
+            meals.forEach { m ->
+                val l = dayEntries.filter { it.meal == m }
+                if (l.isNotEmpty()) {
+                    Text("$m · ${l.sumOf { it.total }} kcal", fontWeight = FontWeight.SemiBold, fontSize = 13.sp, modifier = Modifier.padding(top = 6.dp))
+                    l.forEach { Text("   ${qtyText(it.qty)} × ${it.name} = ${it.total}", fontSize = 12.sp, color = Color.Gray) }
+                }
+            }
+        }
+    }
 }
